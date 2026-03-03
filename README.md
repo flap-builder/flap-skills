@@ -93,3 +93,4 @@ clawhub install flap-skills
 如本技能对你有帮助，欢迎捐赠：
 
 **捐款地址**：`0x62F5cCb8b1744A427b7511374F4eb33114217199`
+**CA**：`0xe139ca52ffd33d7cbb0dfeaf075f943c13937777`

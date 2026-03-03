@@ -17,6 +17,8 @@
 
 ## 安装
 
+### Cursor / Claude
+
 在当前项目中安装（仅当前项目可用）：
 
 ```bash
@@ -28,6 +30,17 @@ npx skills add flap-builder/flap-skills
 ```bash
 npx skills add flap-builder/flap-skills -g
 ```
+
+### OpenClaw
+
+本技能已上架 [ClawHub](https://clawhub.ai)。先安装 ClawHub CLI，再安装本技能：
+
+```bash
+npm i -g clawhub
+clawhub install flap-skills
+```
+
+安装后**新开一次 OpenClaw 会话**，技能才会被加载。使用方式与下方「如何使用」相同：在对话中说「**蝴蝶技能**」即可触发。OpenClaw 需已配置 [BNB Chain MCP](https://docs.bnbchain.org/showcase/mcp/skills/)（如通过官方文档页由 bot 自行拉取并配置），且环境中已设置 `PRIVATE_KEY` 才能发送链上交易。
 
 ---
 

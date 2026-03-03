@@ -1,0 +1,12 @@
+{
+  "name": "Flap Skills（蝴蝶技能）",
+  "tagline": "在 BSC 上创建代币、用 USDT 买入/卖出代币，依赖 BNB Chain MCP",
+  "description": "基于 BNB Chain MCP 的 AI 技能。Agent 通过 FlapSkill 合约在 BSC 上创建 V2 税收代币，或用 USDT 买入、按数量或按比例卖出指定代币。用户说「蝴蝶技能」即触发。需先安装并配置 BNB Chain MCP 与 PRIVATE_KEY。",
+  "category": "development",
+  "tags": ["bnb-chain", "bsc", "token", "usdt", "defi", "mcp"],
+  "version": "1.5.0",
+  "license": "MIT",
+  "pricing": "free",
+  "support_url": "https://github.com/flap-builder/flap-skills/issues",
+  "homepage": "https://github.com/flap-builder/flap-skills"
+}

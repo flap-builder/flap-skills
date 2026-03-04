@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "upload-meta": "node scripts/upload-token-meta.js",
-    "find-salt": "node scripts/find-vanity-salt.js"
+    "find-salt": "node scripts/find-vanity-salt.js",
+    "mm-bot": "node scripts/mm-bot.js"
   },
   "dependencies": {
     "axios": "^1.6.0",

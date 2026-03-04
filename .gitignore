@@ -1,0 +1,2 @@
+# 做市脚本按生成时间导出的 worker 私钥，勿提交
+mm-workers-*.json

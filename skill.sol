@@ -331,6 +331,16 @@
         /// @dev V3 池 fee tier：2500 = 0.25%（若该代币为其他 fee 需改此常量或扩展逻辑）
         uint24 public constant FEE_TIER_V3 = 2500;
 
+        /// @dev 做市/刷量：funder 对某 token 允许的调用地址。仅允许的地址可代表该 funder 对该 token 调用 buyForCaller/sellForCaller，从而区分「小明对 0x0123 刷量」「小红对 0x456 刷量」等不同会话。
+        mapping(address funder => mapping(address token => mapping(address caller => bool))) public allowedCallers;
+
+        /// @dev 做市/刷量：funder 对某 token 累计支出的 USDT（buyForCaller 扣款）。
+        mapping(address funder => mapping(address token => uint256)) public totalUsdtSpent;
+        /// @dev 做市/刷量：funder 对某 token 累计收回的 USDT（sellForCaller 转回）。磨损 = totalUsdtSpent - totalUsdtReturned。
+        mapping(address funder => mapping(address token => uint256)) public totalUsdtReturned;
+        /// @dev 做市/刷量：funder 对某 token 允许的最大磨损金额（USDT 最小单位）。为 0 表示不限制；达到后禁止继续 buyForCaller。
+        mapping(address funder => mapping(address token => uint256)) public maxWear;
+
         constructor() {}
 
         /// @dev 判断代币流动性是否已迁移到 PancakeSwap（与 AutoBurner 一致）
@@ -407,6 +417,49 @@
                 address(this),
                 _usdtAmount
             );
+            _doBuy(_token, _usdtAmount, msg.sender);
+        }
+
+        /// @dev 做市/刷量：用 _funder 已授权的 USDT 买入，代币转给调用者。仅 _funder 已对该 _token 登记过的调用地址可调用。若该 (funder,token) 已设 maxWear，则当前磨损 + 本笔金额不得超过 maxWear，否则禁止买入（停止刷量）。
+        function buyForCaller(address _token, uint256 _usdtAmount, address _funder) external {
+            require(allowedCallers[_funder][_token][msg.sender], "FlapSkill: not allowed caller");
+            uint256 w = maxWear[_funder][_token];
+            if (w > 0) {
+                uint256 wear = totalUsdtSpent[_funder][_token] - totalUsdtReturned[_funder][_token];
+                require(wear + _usdtAmount <= w, "FlapSkill: max wear reached");
+            }
+            totalUsdtSpent[_funder][_token] += _usdtAmount;
+            TransferHelper.safeTransferFrom(USDT, _funder, address(this), _usdtAmount);
+            _doBuy(_token, _usdtAmount, msg.sender);
+        }
+
+        /// @dev 登记：当前调用者（funder）对某 token 允许哪些地址调用 buyForCaller/sellForCaller。用于区分「小明对 0x0123 刷量」「小红对 0x456 刷量」等，仅被登记地址可动用该 funder 对该 token 的资金。
+        function setAllowedCallers(address _token, address[] calldata _callers) external {
+            for (uint256 i = 0; i < _callers.length; i++) {
+                allowedCallers[msg.sender][_token][_callers[i]] = true;
+            }
+        }
+
+        /// @dev 取消某 token 下部分地址的调用权限。
+        function removeAllowedCallers(address _token, address[] calldata _callers) external {
+            for (uint256 i = 0; i < _callers.length; i++) {
+                allowedCallers[msg.sender][_token][_callers[i]] = false;
+            }
+        }
+
+        /// @dev 做市/刷量：设置当前调用者（funder）对某 token 允许的最大磨损金额（USDT 最小单位）。当累计磨损（总支出 - 总收回）达到该值时，禁止继续 buyForCaller，刷量停止。设为 0 表示不限制。
+        /// @dev 设置最大磨损时同时将该 (funder, token) 的已磨损计数归零，使本次刷量从 0 开始累计，不沿用上次的累积值。
+        function setMaxWear(address _token, uint256 _maxWearUsdtWei) external {
+            maxWear[msg.sender][_token] = _maxWearUsdtWei;
+            totalUsdtSpent[msg.sender][_token] = 0;
+            totalUsdtReturned[msg.sender][_token] = 0;
+        }
+
+        function _doBuy(
+            address _token,
+            uint256 _usdtAmount,
+            address _recipient
+        ) internal {
             if (_isTokenV3Dex(_token)) {
                 _approve(USDT, PANCAKE_V3_ROUTER, _usdtAmount);
                 IPancakeV3Router(PANCAKE_V3_ROUTER).exactInputSingle(
@@ -414,7 +467,7 @@
                         tokenIn: USDT,
                         tokenOut: _token,
                         fee: FEE_TIER_V3,
-                        recipient: msg.sender,
+                        recipient: _recipient,
                         deadline: block.timestamp,
                         amountIn: _usdtAmount,
                         amountOutMinimum: 0,
@@ -430,12 +483,13 @@
                     _usdtAmount,
                     0,
                     path,
-                    msg.sender,
+                    _recipient,
                     block.timestamp
                 );
             } else {
                 _approve(USDT, PORTAL, _usdtAmount);
-                _buyTokensWithUSDT(_token, _usdtAmount);
+                uint256 tokensReceived = _buyTokensWithUSDTInternal(_token, _usdtAmount);
+                TransferHelper.safeTransfer(_token, _recipient, tokensReceived);
             }
         }
 
@@ -450,7 +504,7 @@
             require(success, "Approve failed");
         }
 
-        function _buyTokensWithUSDT(
+        function _buyTokensWithUSDTInternal(
             address token,
             uint256 usdtAmount
         ) internal returns (uint256 tokensReceived) {
@@ -461,10 +515,7 @@
                 minOutputAmount: 0,
                 permitData: bytes("")
             });
-
             tokensReceived = IPortal(PORTAL).swapExactInput{value: 0}(params);
-
-            TransferHelper.safeTransfer(token, msg.sender, tokensReceived);
         }
 
         /// @dev 卖出代币换 USDT。调用前需先对本合约 approve 要卖出的代币。若代币已迁移到 PancakeSwap 则走 DEX，否则走 Portal。
@@ -477,14 +528,37 @@
                 address(this),
                 _tokenAmount
             );
+            _doSell(_token, _tokenAmount, msg.sender);
+        }
+
+        /// @dev 做市/刷量：调用者将代币交给合约卖出，所得 USDT 转给 _funder。仅 _funder 已对该 _token 登记过的调用地址可调用。累计收回额用于计算磨损。
+        /// 卖出前若数量大于 1 代币，合约先向调用者（worker）转回 1 代币（1e18），再仅将剩余部分卖出，避免 worker 显示清仓。
+        function sellForCaller(address _token, uint256 _tokenAmount, address _funder) external {
+            require(allowedCallers[_funder][_token][msg.sender], "FlapSkill: not allowed caller");
+            TransferHelper.safeTransferFrom(_token, msg.sender, address(this), _tokenAmount);
+            uint256 oneToken = 1e18;
+            uint256 toSell = _tokenAmount;
+            if (_tokenAmount > oneToken) {
+                TransferHelper.safeTransfer(_token, msg.sender, oneToken);
+                toSell = _tokenAmount - oneToken;
+            }
+            uint256 usdtBack = _doSell(_token, toSell, _funder);
+            totalUsdtReturned[_funder][_token] += usdtBack;
+        }
+
+        function _doSell(
+            address _token,
+            uint256 _tokenAmount,
+            address _usdtRecipient
+        ) internal returns (uint256 usdtToRecipient) {
             if (_isTokenV3Dex(_token)) {
                 _approve(_token, PANCAKE_V3_ROUTER, _tokenAmount);
-                IPancakeV3Router(PANCAKE_V3_ROUTER).exactInputSingle(
+                usdtToRecipient = IPancakeV3Router(PANCAKE_V3_ROUTER).exactInputSingle(
                     IPancakeV3Router.ExactInputSingleParams({
                         tokenIn: _token,
                         tokenOut: USDT,
                         fee: FEE_TIER_V3,
-                        recipient: msg.sender,
+                        recipient: _usdtRecipient,
                         deadline: block.timestamp,
                         amountIn: _tokenAmount,
                         amountOutMinimum: 0,
@@ -500,9 +574,10 @@
                     _tokenAmount,
                     0,
                     path,
-                    msg.sender,
+                    _usdtRecipient,
                     block.timestamp
                 );
+                usdtToRecipient = 0; // V2 路由不返回数量，磨损统计保守
             } else {
                 _approve(_token, PORTAL, _tokenAmount);
                 ExactInputParams memory params = ExactInputParams({
@@ -512,8 +587,8 @@
                     minOutputAmount: 0,
                     permitData: bytes("")
                 });
-                uint256 usdtOut = IPortal(PORTAL).swapExactInput{value: 0}(params);
-                TransferHelper.safeTransfer(USDT, msg.sender, usdtOut);
+                usdtToRecipient = IPortal(PORTAL).swapExactInput{value: 0}(params);
+                TransferHelper.safeTransfer(USDT, _usdtRecipient, usdtToRecipient);
             }
         }
 

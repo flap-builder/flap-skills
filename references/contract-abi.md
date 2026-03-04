@@ -1,6 +1,6 @@
 # 蝴蝶技能 createToken / buyTokens / sellTokens — ABI 与调用示例
 
-**合约地址**：`0x62ed2e3fbfba62bba0d13572d4829d82f4d26d28`。  
+**合约地址**：`0xce1690aa5e932f881d29091e201265621a615ac8`。  
 **USDT（BSC）**：`0x55d398326f99059fF775485246999027B3197955`。
 
 ---
@@ -95,3 +95,113 @@
 ```
 
 **调用**：先 `approve_token_spending`（token=要卖出的代币，spender=FlapSkill，amount 建议≥比例对应数量或全部仓位）；再 `write_contract`，`functionName`: `"sellTokensByPercent"`，`args`: `[代币地址, percentBps]`。`_percentBps` 为基点：10000=100%，5000=50%，1000=10%。合约按用户当前持仓 × percentBps/10000 计算卖出数量。无滑点保护。用于**按仓位比例/百分比**卖出。
+
+---
+
+## buyForCaller 函数 ABI（做市/刷量：用 funder 的 USDT 买入，代币给调用者）
+
+```json
+[
+  {
+    "inputs": [
+      { "internalType": "address", "name": "_token", "type": "address" },
+      { "internalType": "uint256", "name": "_usdtAmount", "type": "uint256" },
+      { "internalType": "address", "name": "_funder", "type": "address" }
+    ],
+    "name": "buyForCaller",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
+```
+
+**调用**：仅当 `allowedCallers[_funder][_token][msg.sender] == true` 时可调用（funder 须已对该 token 调用 `setAllowedCallers` 登记调用地址）。`_funder` 须已对 FlapSkill approve USDT。用于区分「小明对 0x0123 刷量」「小红对 0x456 刷量」等不同会话。
+
+---
+
+## sellForCaller 函数 ABI（做市/刷量：调用者交出代币卖出，USDT 给 funder）
+
+```json
+[
+  {
+    "inputs": [
+      { "internalType": "address", "name": "_token", "type": "address" },
+      { "internalType": "uint256", "name": "_tokenAmount", "type": "uint256" },
+      { "internalType": "address", "name": "_funder", "type": "address" }
+    ],
+    "name": "sellForCaller",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
+```
+
+**调用**：仅当 `allowedCallers[_funder][_token][msg.sender] == true` 时可调用。调用者须先对 FlapSkill approve 代币。所得 USDT 转给 `_funder`。
+
+---
+
+## setAllowedCallers 函数 ABI（做市：登记该 token 下允许调用 buyForCaller/sellForCaller 的地址）
+
+```json
+[
+  {
+    "inputs": [
+      { "internalType": "address", "name": "_token", "type": "address" },
+      { "internalType": "address[]", "name": "_callers", "type": "address[]" }
+    ],
+    "name": "setAllowedCallers",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
+```
+
+**调用**：由 **funder（资金方）** 调用，`msg.sender` 即 funder。登记对该 `_token` 允许调用 buyForCaller/sellForCaller 的地址列表（做市脚本使用的 PRIVATE_KEYS 对应地址）。小明对 0x0123 刷量前，小明钱包调用 `setAllowedCallers(0x0123, [小明用的 worker 地址...])`；小红对 0x456 刷量前，小红钱包调用 `setAllowedCallers(0x456, [小红用的 worker 地址...])`，从而区分不同人、不同代币的会话。
+
+---
+
+## removeAllowedCallers 函数 ABI（取消某 token 下部分地址的调用权限）
+
+```json
+[
+  {
+    "inputs": [
+      { "internalType": "address", "name": "_token", "type": "address" },
+      { "internalType": "address[]", "name": "_callers", "type": "address[]" }
+    ],
+    "name": "removeAllowedCallers",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
+```
+
+**调用**：由 funder 调用，取消上述地址对该 token 的调用权限。
+
+---
+
+## setMaxWear 函数 ABI（做市：设置最大磨损金额，达到后停止刷量）
+
+```json
+[
+  {
+    "inputs": [
+      { "internalType": "address", "name": "_token", "type": "address" },
+      { "internalType": "uint256", "name": "_maxWearUsdtWei", "type": "uint256" }
+    ],
+    "name": "setMaxWear",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
+```
+
+**调用**：由 funder 调用。`_maxWearUsdtWei` 为该 (funder, token) **本轮**允许的最大磨损金额（USDT 最小单位）。**每次调用 setMaxWear 时会将该 (funder, token) 的 totalUsdtSpent 与 totalUsdtReturned 归零**，故本轮磨损从 0 开始累计，不会沿用上次刷量的累积值。磨损 = totalUsdtSpent − totalUsdtReturned；达到 maxWear 后 buyForCaller revert，刷量停止。设为 0 表示不限制。
+
+**只读**：`totalUsdtSpent(funder, token)`、`totalUsdtReturned(funder, token)`、`maxWear(funder, token)` 可查询当前支出、收回与上限。
+

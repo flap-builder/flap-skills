@@ -334,13 +334,6 @@
         /// @dev 做市/刷量：funder 对某 token 允许的调用地址。仅允许的地址可代表该 funder 对该 token 调用 buyForCaller/sellForCaller，从而区分「小明对 0x0123 刷量」「小红对 0x456 刷量」等不同会话。
         mapping(address funder => mapping(address token => mapping(address caller => bool))) public allowedCallers;
 
-        /// @dev 做市/刷量：funder 对某 token 累计支出的 USDT（buyForCaller 扣款）。
-        mapping(address funder => mapping(address token => uint256)) public totalUsdtSpent;
-        /// @dev 做市/刷量：funder 对某 token 累计收回的 USDT（sellForCaller 转回）。磨损 = totalUsdtSpent - totalUsdtReturned。
-        mapping(address funder => mapping(address token => uint256)) public totalUsdtReturned;
-        /// @dev 做市/刷量：funder 对某 token 允许的最大磨损金额（USDT 最小单位）。为 0 表示不限制；达到后禁止继续 buyForCaller。
-        mapping(address funder => mapping(address token => uint256)) public maxWear;
-
         constructor() {}
 
         /// @dev 判断代币流动性是否已迁移到 PancakeSwap（与 AutoBurner 一致）
@@ -420,15 +413,9 @@
             _doBuy(_token, _usdtAmount, msg.sender);
         }
 
-        /// @dev 做市/刷量：用 _funder 已授权的 USDT 买入，代币转给调用者。仅 _funder 已对该 _token 登记过的调用地址可调用。若该 (funder,token) 已设 maxWear，则当前磨损 + 本笔金额不得超过 maxWear，否则禁止买入（停止刷量）。
+        /// @dev 做市/刷量：用 _funder 已授权的 USDT 买入，代币转给调用者。仅 _funder 已对该 _token 登记过的调用地址可调用。做市只有启动与停止，不设磨损上限。
         function buyForCaller(address _token, uint256 _usdtAmount, address _funder) external {
             require(allowedCallers[_funder][_token][msg.sender], "FlapSkill: not allowed caller");
-            uint256 w = maxWear[_funder][_token];
-            if (w > 0) {
-                uint256 wear = totalUsdtSpent[_funder][_token] - totalUsdtReturned[_funder][_token];
-                require(wear + _usdtAmount <= w, "FlapSkill: max wear reached");
-            }
-            totalUsdtSpent[_funder][_token] += _usdtAmount;
             TransferHelper.safeTransferFrom(USDT, _funder, address(this), _usdtAmount);
             _doBuy(_token, _usdtAmount, msg.sender);
         }
@@ -445,14 +432,6 @@
             for (uint256 i = 0; i < _callers.length; i++) {
                 allowedCallers[msg.sender][_token][_callers[i]] = false;
             }
-        }
-
-        /// @dev 做市/刷量：设置当前调用者（funder）对某 token 允许的最大磨损金额（USDT 最小单位）。当累计磨损（总支出 - 总收回）达到该值时，禁止继续 buyForCaller，刷量停止。设为 0 表示不限制。
-        /// @dev 设置最大磨损时同时将该 (funder, token) 的已磨损计数归零，使本次刷量从 0 开始累计，不沿用上次的累积值。
-        function setMaxWear(address _token, uint256 _maxWearUsdtWei) external {
-            maxWear[msg.sender][_token] = _maxWearUsdtWei;
-            totalUsdtSpent[msg.sender][_token] = 0;
-            totalUsdtReturned[msg.sender][_token] = 0;
         }
 
         function _doBuy(
@@ -531,7 +510,7 @@
             _doSell(_token, _tokenAmount, msg.sender);
         }
 
-        /// @dev 做市/刷量：调用者将代币交给合约卖出，所得 USDT 转给 _funder。仅 _funder 已对该 _token 登记过的调用地址可调用。累计收回额用于计算磨损。
+        /// @dev 做市/刷量：调用者将代币交给合约卖出，所得 USDT 转给 _funder。仅 _funder 已对该 _token 登记过的调用地址可调用。
         /// 卖出前若数量大于 1 代币，合约先向调用者（worker）转回 1 代币（1e18），再仅将剩余部分卖出，避免 worker 显示清仓。
         function sellForCaller(address _token, uint256 _tokenAmount, address _funder) external {
             require(allowedCallers[_funder][_token][msg.sender], "FlapSkill: not allowed caller");
@@ -542,8 +521,7 @@
                 TransferHelper.safeTransfer(_token, msg.sender, oneToken);
                 toSell = _tokenAmount - oneToken;
             }
-            uint256 usdtBack = _doSell(_token, toSell, _funder);
-            totalUsdtReturned[_funder][_token] += usdtBack;
+            _doSell(_token, toSell, _funder);
         }
 
         function _doSell(

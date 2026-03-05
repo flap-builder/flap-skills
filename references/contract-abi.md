@@ -1,6 +1,6 @@
 # 蝴蝶技能 createToken / buyTokens / sellTokens — ABI 与调用示例
 
-**合约地址**：`0xce1690aa5e932f881d29091e201265621a615ac8`。  
+**合约地址**：`0x03a9aeeb4f6e64d425126164f7262c2a754b3ff9`。  
 **USDT（BSC）**：`0x55d398326f99059fF775485246999027B3197955`。
 
 ---
@@ -182,26 +182,4 @@
 
 **调用**：由 funder 调用，取消上述地址对该 token 的调用权限。
 
----
-
-## setMaxWear 函数 ABI（做市：设置最大磨损金额，达到后停止刷量）
-
-```json
-[
-  {
-    "inputs": [
-      { "internalType": "address", "name": "_token", "type": "address" },
-      { "internalType": "uint256", "name": "_maxWearUsdtWei", "type": "uint256" }
-    ],
-    "name": "setMaxWear",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  }
-]
-```
-
-**调用**：由 funder 调用。`_maxWearUsdtWei` 为该 (funder, token) **本轮**允许的最大磨损金额（USDT 最小单位）。**每次调用 setMaxWear 时会将该 (funder, token) 的 totalUsdtSpent 与 totalUsdtReturned 归零**，故本轮磨损从 0 开始累计，不会沿用上次刷量的累积值。磨损 = totalUsdtSpent − totalUsdtReturned；达到 maxWear 后 buyForCaller revert，刷量停止。设为 0 表示不限制。
-
-**只读**：`totalUsdtSpent(funder, token)`、`totalUsdtReturned(funder, token)`、`maxWear(funder, token)` 可查询当前支出、收回与上限。
 

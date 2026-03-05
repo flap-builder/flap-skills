@@ -3,7 +3,7 @@
  * 做市/刷量机器人：资金保留在 MCP 钱包，MCP 对 FlapSkill 授权 USDT 额度；
  * 不同地址轮流调用 FlapSkill.buyForCaller / sellForCaller 完成买卖。
  *
- * 环境变量：FUNDER_ADDRESS, TOKEN_CA 必填。私钥二选一：PRIVATE_KEYS 或 PRIVATE_KEYS_FILE。可选 COLLECT_TO_ADDRESS：停止时（达磨损或 Ctrl+C）自动将 worker 剩余代币与 BNB 归集到该地址。
+ * 环境变量：FUNDER_ADDRESS, TOKEN_CA 必填。私钥二选一：PRIVATE_KEYS 或 PRIVATE_KEYS_FILE。可选 COLLECT_TO_ADDRESS：停止时（用户停止或 Ctrl+C）自动将 worker 剩余代币与 BNB 归集到该地址。做市不设磨损上限，仅由用户停止。
  */
 
 import { createPublicClient, createWalletClient, http, parseAbi, parseUnits, getAddress } from "viem";
@@ -16,7 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { privateKeyToAccount } from "viem/accounts";
 import { bsc } from "viem/chains";
 
-const FLAP_SKILL = getAddress("0xce1690aa5e932f881d29091e201265621a615ac8");
+const FLAP_SKILL = getAddress("0x03a9aeeb4f6e64d425126164f7262c2a754b3ff9");
 const USDT_DECIMALS = 18;
 const MAX_WORKERS = 20;
 
@@ -261,10 +261,6 @@ async function main() {
         await runOne();
       } catch (e) {
         const errMsg = (e && e.message) ? String(e.message) : "";
-        if (errMsg.includes("max wear reached") || errMsg.includes("max wear")) {
-          console.log("已达最大磨损金额，刷量停止。");
-          break;
-        }
         if (!isGasRelatedError(errMsg)) {
           console.error(`[${new Date().toISOString()}] 轮 ${done + 1} 失败:`, errMsg || e);
         }

@@ -4,6 +4,7 @@
  * 买卖由 worker 调用 FlapSkill.buyForCaller / sellForCaller 完成，不是 MCP 直接买卖。
  *
  * 环境变量：FUNDER_ADDRESS, TOKEN_CA 必填。私钥二选一：PRIVATE_KEYS 或 PRIVATE_KEYS_FILE。可选 COLLECT_TO_ADDRESS：停止时（用户停止或 Ctrl+C）自动将 worker 剩余代币与 BNB 归集到该地址。做市不设磨损上限，仅由用户停止。
+ * 若 MCP 钱包（funder）无 USDT 导致 buyForCaller 失败（TRANSFER_FROM_FAILED），则自动将所有 worker 持有的该代币通过 sellForCaller 卖给 funder（USDT 回到 funder），然后继续刷量，不停止。
  */
 
 import { createPublicClient, createWalletClient, http, parseAbi, parseUnits, getAddress } from "viem";
@@ -165,6 +166,51 @@ async function main() {
     );
   };
 
+  /** funder 无 USDT 导致 buyForCaller 扣款失败 */
+  const isFunderNoUsdtError = (msg) => {
+    if (!msg || typeof msg !== "string") return false;
+    const s = msg.toLowerCase();
+    return s.includes("transfer_from_failed") || s.includes("transferhelper");
+  };
+
+  /** 将当前所有 worker 持有的该代币通过 sellForCaller 卖给 funder，然后退出并归集 */
+  const runSellAllWorkersToFunder = async () => {
+    console.log("[MCP 无 USDT] 正在将各 worker 持有的代币全部卖给 funder…");
+    let soldCount = 0;
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i];
+      const wallet = walletClients[i];
+      try {
+        const balance = await publicClient.readContract({
+          ...tokenContract,
+          functionName: "balanceOf",
+          args: [account.address],
+        });
+        if (balance === 0n) continue;
+        const approveHash = await wallet.writeContract({
+          ...tokenContract,
+          functionName: "approve",
+          args: [FLAP_SKILL, balance],
+          account,
+        });
+        await publicClient.waitForTransactionReceipt({ hash: approveHash });
+        const sellHash = await wallet.writeContract({
+          address: FLAP_SKILL,
+          abi: FLAP_SKILL_ABI,
+          functionName: "sellForCaller",
+          args: [token, balance, funderAddress],
+          account,
+        });
+        await publicClient.waitForTransactionReceipt({ hash: sellHash });
+        soldCount++;
+        console.log(`  worker ${account.address.slice(0, 10)}… 已卖出，tx ${sellHash.slice(0, 10)}…`);
+      } catch (e) {
+        console.error(`  worker ${account.address} 卖出失败:`, (e && e.message) || e);
+      }
+    }
+    console.log(`[MCP 无 USDT] 已将所有 worker 代币卖给 funder，共 ${soldCount} 笔。funder 已收回 USDT，继续刷量。`);
+  };
+
   const runOne = async () => {
     const amount = randomInRange(usdtMin, usdtMax);
     const usdtAmountWei = parseUnits(String(amount), USDT_DECIMALS);
@@ -242,6 +288,11 @@ async function main() {
     done++;
     } catch (e) {
       const errMsg = (e && e.message) ? String(e.message) : "";
+      if (isFunderNoUsdtError(errMsg)) {
+        console.error(`[${new Date().toISOString()}] 轮 ${done + 1} 失败: MCP 钱包(funder)无 USDT，无法扣款。`);
+        await runSellAllWorkersToFunder();
+        return;
+      }
       if (isGasRelatedError(errMsg)) {
         console.error(
           `[${new Date().toISOString()}] 轮 ${done + 1} 失败(可能 worker Gas 不足):`,

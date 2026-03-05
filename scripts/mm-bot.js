@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * 做市/刷量机器人：资金保留在 MCP 钱包，MCP 对 FlapSkill 授权 USDT 额度；
- * 不同地址轮流调用 FlapSkill.buyForCaller / sellForCaller 完成买卖。
+ * 做市/刷量机器人：资金在 MCP 钱包（funder），MCP 仅对 FlapSkill 合约授权 USDT 并 setAllowedCallers；
+ * 买卖由 worker 调用 FlapSkill.buyForCaller / sellForCaller 完成，不是 MCP 直接买卖。
  *
  * 环境变量：FUNDER_ADDRESS, TOKEN_CA 必填。私钥二选一：PRIVATE_KEYS 或 PRIVATE_KEYS_FILE。可选 COLLECT_TO_ADDRESS：停止时（用户停止或 Ctrl+C）自动将 worker 剩余代币与 BNB 归集到该地址。做市不设磨损上限，仅由用户停止。
  */

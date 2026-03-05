@@ -65,7 +65,7 @@ clawhub install flap-skills
 | **买入** | 先授权 USDT，再按指定代币与 USDT 数量买入 |
 | **卖出（按数量）** | 指定代币地址与卖出数量 |
 | **卖出（按比例）** | 指定代币地址与比例（如 50%、100%） |
-| **做市/刷量** | 说一句即由 Agent **自主**完成：生成 worker → 用 MCP **transfer_native_token** 向每个 worker 发 0.001 BNB 作 gas → approve USDT → setAllowedCallers → 启动 mm-bot。**只有启动与停止**，不会因磨损自动停止。**资金归集地址必填**。**停止**：说「**停止做市刷量**」。**归集资金**：说「**归集资金**」并指定代币与目标地址（及 worker 文件）。见 [SKILL.md §6](SKILL.md#6-做市刷量与创建代币买卖一致用户说一句agent-自主执行) |
+| **做市/刷量** | 说一句即由 Agent **自主**完成：生成 worker → **Agent 自主向每个 worker 转 0.001 BNB 作 Gas**（MCP transfer_native_token）→ **MCP 对 FlapSkill 合约授权 USDT 并 setAllowedCallers 登记 worker** → 启动 mm-bot（**由 worker 调用合约** buyForCaller/sellForCaller 买卖，不是 MCP 直接买卖）。**只有启动与停止**，不会因磨损自动停止。**资金归集地址必填**。**停止**：说「**停止做市刷量**」。**归集资金**：说「**归集资金**」并指定代币与目标地址（及 worker 文件）。见 [SKILL.md §6](SKILL.md#6-做市刷量与创建代币买卖一致用户说一句agent-自主执行) |
 
 ### 创建代币提示词示例
 
@@ -151,7 +151,7 @@ clawhub install flap-skills
 使用蝴蝶技能对 0xe139ca52ffd33d7cbb0dfeaf075f943c13937777 进行做市刷量，随机范围：1-10U，资金归集地址：0x62F5cCb8b1744A427b7511374F4eb33114217199
 ```
 
-Agent 将自动：生成 20 个 worker → 向每人转 0.001 BNB → 授权 USDT、登记 worker → 启动做市脚本。**只有你说「停止做市刷量」或 Ctrl+C 会停止**，停止后剩余代币与 BNB 归集到上述地址。**做市过程中若某 worker Gas 不足**，Agent 会**自主**用 MCP 向该 worker 转 0.001 BNB 补 gas，**无需主人批准**。
+Agent 将自动：生成 20 个 worker → **自主向每人转 0.001 BNB 作 Gas**（无需你手动转）→ **MCP 对技能合约授权 USDT、setAllowedCallers 登记 worker** → 启动做市脚本（**worker 调用合约** buyForCaller/sellForCaller 买卖）。**只有你说「停止做市刷量」或 Ctrl+C 会停止**，停止后剩余代币与 BNB 归集到上述地址。**做市过程中若某 worker Gas 不足**，Agent 会**自主**用 MCP 向该 worker 转 0.001 BNB 补 gas，**无需主人批准**。
 
 **停止做市**：说「**停止做市刷量**」或「蝴蝶技能 停止做市刷量」，Agent 会停止做市脚本（本轮结束后执行归集）；或在运行 mm-bot 的终端按 **Ctrl+C**。
 

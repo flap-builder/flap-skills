@@ -17,9 +17,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { privateKeyToAccount } from "viem/accounts";
 import { bsc } from "viem/chains";
 
-const FLAP_SKILL = getAddress("0x03a9aeeb4f6e64d425126164f7262c2a754b3ff9");
+const FLAP_SKILL = getAddress("0x482970490d06fc3a480bfd0e9e58141667cffedc");
 const USDT_DECIMALS = 18;
 const MAX_WORKERS = 20;
+/** 每轮同时买入/卖出的地址数：BATCH 个同时买，BATCH 个同时卖（买与卖地址不重合） */
+const BATCH = 5;
 
 const FLAP_SKILL_ABI = parseAbi([
   "function buyForCaller(address _token, uint256 _usdtAmount, address _funder) external",
@@ -48,6 +50,11 @@ function randomInRange(min, max) {
   const M = Math.max(min, max);
   const r = m + Math.random() * (M - m);
   return Math.round(r * 1e4) / 1e4;
+}
+
+/** 返回当前北京时间字符串，用于日志 */
+function beijingTime() {
+  return new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
 }
 
 function parsePrivateKeys(input) {
@@ -94,8 +101,9 @@ async function main() {
   }
   const funderAddress = getAddress(funderAddressRaw);
   const workerKeys = loadWorkerKeys();
-  if (workerKeys.length < 2 || workerKeys.length > MAX_WORKERS) {
-    console.error(`请设置 PRIVATE_KEYS 或 PRIVATE_KEYS_FILE（.mm-workers.json），需 2～${MAX_WORKERS} 个 worker 私钥`);
+  const minWorkers = 2 * BATCH;
+  if (workerKeys.length < minWorkers || workerKeys.length > MAX_WORKERS) {
+    console.error(`请设置 PRIVATE_KEYS 或 PRIVATE_KEYS_FILE（.mm-workers.json），需 ${minWorkers}～${MAX_WORKERS} 个 worker 私钥（当前每轮 ${BATCH} 个同时买、${BATCH} 个同时卖）`);
     process.exit(1);
   }
 
@@ -143,7 +151,7 @@ async function main() {
   console.log("  FlapSkill:", FLAP_SKILL);
   console.log("  资金方(funder):", funderAddress);
   console.log("  代币:", token);
-  console.log("  交易地址数:", accounts.length);
+  console.log("  交易地址数:", accounts.length, `（每轮 ${BATCH} 个同时买、${BATCH} 个同时卖）`);
   console.log("  每笔 USDT 范围:", usdtMin, "~", usdtMax);
   console.log("  间隔(秒):", intervalSec, "  轮数(0=无限):", rounds);
   console.log("---");
@@ -152,8 +160,6 @@ async function main() {
 
   let done = 0;
   let stopRequested = false;
-  let prevBuyerIdx = null;
-  let prevSellerIdx = null;
 
   const isGasRelatedError = (msg) => {
     if (!msg || typeof msg !== "string") return false;
@@ -175,7 +181,7 @@ async function main() {
 
   /** 将当前所有 worker 持有的该代币通过 sellForCaller 卖给 funder，然后退出并归集 */
   const runSellAllWorkersToFunder = async () => {
-    console.log("[MCP 无 USDT] 正在将各 worker 持有的代币全部卖给 funder…");
+    console.log(`[${beijingTime()}] [MCP 无 USDT] 正在将各 worker 持有的代币全部卖给 funder…`);
     let soldCount = 0;
     for (let i = 0; i < accounts.length; i++) {
       const account = accounts[i];
@@ -208,98 +214,127 @@ async function main() {
         console.error(`  worker ${account.address} 卖出失败:`, (e && e.message) || e);
       }
     }
-    console.log(`[MCP 无 USDT] 已将所有 worker 代币卖给 funder，共 ${soldCount} 笔。funder 已收回 USDT，继续刷量。`);
+    console.log(`[${beijingTime()}] [MCP 无 USDT] 已将所有 worker 代币卖给 funder，共 ${soldCount} 笔。funder 已收回 USDT，继续刷量。`);
+  };
+
+  /** 打乱数组并取前 n 个 */
+  const shuffle = (arr, n) => {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a.slice(0, n);
   };
 
   const runOne = async () => {
-    const amount = randomInRange(usdtMin, usdtMax);
-    const usdtAmountWei = parseUnits(String(amount), USDT_DECIMALS);
     const L = accounts.length;
-    const indices = [...Array(L).keys()];
-    const canBuy = prevSellerIdx === null ? indices : indices.filter((i) => i !== prevSellerIdx);
-    const canSeller = prevBuyerIdx === null ? indices : indices.filter((i) => i !== prevBuyerIdx);
-    const buyerIdx = canBuy[Math.floor(Math.random() * canBuy.length)];
-    let sellerCandidates = canSeller.filter((i) => i !== buyerIdx);
-    if (sellerCandidates.length === 0) sellerCandidates = indices.filter((i) => i !== buyerIdx);
-    const sellerIdx = sellerCandidates[Math.floor(Math.random() * sellerCandidates.length)];
-    const buyer = accounts[buyerIdx];
-    const seller = accounts[sellerIdx];
-    const buyerWallet = walletClients[buyerIdx];
-    const sellerWallet = walletClients[sellerIdx];
+    const allIndices = [...Array(L).keys()];
+    const chosen = shuffle(allIndices, 2 * BATCH);
+    const buyerIndices = chosen.slice(0, BATCH);
+    const sellerIndices = chosen.slice(BATCH, 2 * BATCH);
+
+    const buyers = buyerIndices.map((i) => accounts[i]);
+    const sellerAccounts = sellerIndices.map((i) => accounts[i]);
+    const buyerWallets = buyerIndices.map((i) => walletClients[i]);
+    const sellerWallets = sellerIndices.map((i) => walletClients[i]);
 
     try {
-    // 1) 买家通过 FlapSkill.buyForCaller 买入（扣 funder 的 USDT，代币给买家）
-    const buyHash = await buyerWallet.writeContract({
-      address: FLAP_SKILL,
-      abi: FLAP_SKILL_ABI,
-      functionName: "buyForCaller",
-      args: [token, usdtAmountWei, funderAddress],
-      account: buyer,
-    });
-    await publicClient.waitForTransactionReceipt({ hash: buyHash });
-    const tokenBalance = await publicClient.readContract({
-      ...tokenContract,
-      functionName: "balanceOf",
-      args: [buyer.address],
-    });
-    if (tokenBalance === 0n) {
-      console.warn(`[${new Date().toISOString()}] 轮 ${done + 1} 买入后余额为 0，跳过`);
+      // 1) BATCH 个地址同时买入（并行发 tx，再等全部确认）
+      const buyAmounts = Array.from({ length: BATCH }, () => randomInRange(usdtMin, usdtMax));
+      const buyPromises = buyAmounts.map((amount, i) =>
+        buyerWallets[i].writeContract({
+          address: FLAP_SKILL,
+          abi: FLAP_SKILL_ABI,
+          functionName: "buyForCaller",
+          args: [token, parseUnits(String(amount), USDT_DECIMALS), funderAddress],
+          account: buyers[i],
+        })
+      );
+      const buyHashes = await Promise.all(buyPromises);
+      await Promise.all(buyHashes.map((hash) => publicClient.waitForTransactionReceipt({ hash })));
+
+      // 2) 读取 5 个买家的代币余额，再 BATCH 笔并行转给对应卖家（每人转 50%～100% 随机）
+      const buyerBalances = await Promise.all(
+        buyers.map((acc) =>
+          publicClient.readContract({
+            ...tokenContract,
+            functionName: "balanceOf",
+            args: [acc.address],
+          })
+        )
+      );
+      const transferAmounts = buyerBalances.map((bal) => {
+        const ratioBps = 5000 + Math.floor(Math.random() * 5001);
+        let amt = (bal * BigInt(ratioBps)) / 10000n;
+        if (amt < 1n) amt = 1n;
+        return amt;
+      });
+      const transferPromises = transferAmounts.map((amt, i) =>
+        buyerWallets[i].writeContract({
+          ...tokenContract,
+          functionName: "transfer",
+          args: [sellerAccounts[i].address, amt],
+          account: buyers[i],
+        })
+      );
+      const transferHashes = await Promise.all(transferPromises);
+      await Promise.all(transferHashes.map((hash) => publicClient.waitForTransactionReceipt({ hash })));
+
+      // 3) BATCH 个卖家同时授权并卖出（先并行 approve，再并行 sellForCaller）
+      const sellerBalances = await Promise.all(
+        sellerAccounts.map((acc) =>
+          publicClient.readContract({
+            ...tokenContract,
+            functionName: "balanceOf",
+            args: [acc.address],
+          })
+        )
+      );
+      const approvePromises = sellerBalances.map((bal, i) =>
+        sellerWallets[i].writeContract({
+          ...tokenContract,
+          functionName: "approve",
+          args: [FLAP_SKILL, bal],
+          account: sellerAccounts[i],
+        })
+      );
+      const approveHashes = await Promise.all(approvePromises);
+      await Promise.all(approveHashes.map((hash) => publicClient.waitForTransactionReceipt({ hash })));
+      const sellPromises = sellerBalances.map((bal, i) =>
+        sellerWallets[i].writeContract({
+          address: FLAP_SKILL,
+          abi: FLAP_SKILL_ABI,
+          functionName: "sellForCaller",
+          args: [token, bal, funderAddress],
+          account: sellerAccounts[i],
+        })
+      );
+      const sellHashes = await Promise.all(sellPromises);
+      await Promise.all(sellHashes.map((hash) => publicClient.waitForTransactionReceipt({ hash })));
+
+      const totalBuyU = buyAmounts.reduce((a, b) => a + b, 0).toFixed(2);
+      console.log(
+        `[${beijingTime()}] 轮 ${done + 1} ${BATCH} 买 ${totalBuyU} U | ${BATCH} 卖 | 买 ${buyHashes[0].slice(0, 8)}… 卖 ${sellHashes[0].slice(0, 8)}…`
+      );
       done++;
-      return;
-    }
-
-    // 卖出数量随机：本次买入得到的代币的 50%～100% 随机比例
-    const ratioBps = 5000 + Math.floor(Math.random() * 5001);
-    let sellAmount = (tokenBalance * BigInt(ratioBps)) / 10000n;
-    if (sellAmount < 1n) sellAmount = 1n;
-
-    // 2) 买家把要卖出的代币转给卖家
-    const transferHash = await buyerWallet.writeContract({
-      ...tokenContract,
-      functionName: "transfer",
-      args: [seller.address, sellAmount],
-      account: buyer,
-    });
-    await publicClient.waitForTransactionReceipt({ hash: transferHash });
-
-    // 3) 卖家授权 FlapSkill 并调用 sellForCaller（所得 USDT 回 funder）
-    const approveHash = await sellerWallet.writeContract({
-      ...tokenContract,
-      functionName: "approve",
-      args: [FLAP_SKILL, sellAmount],
-      account: seller,
-    });
-    await publicClient.waitForTransactionReceipt({ hash: approveHash });
-    const sellHash = await sellerWallet.writeContract({
-      address: FLAP_SKILL,
-      abi: FLAP_SKILL_ABI,
-      functionName: "sellForCaller",
-      args: [token, sellAmount, funderAddress],
-      account: seller,
-    });
-    await publicClient.waitForTransactionReceipt({ hash: sellHash });
-
-    const sellPct = (ratioBps / 100).toFixed(1);
-    console.log(
-      `[${new Date().toISOString()}] 轮 ${done + 1} 买 ${amount} U | 卖 ${sellPct}% 仓位 | 买 ${buyHash.slice(0, 10)}… → 转 → 卖 ${sellHash.slice(0, 10)}…`
-    );
-    prevBuyerIdx = buyerIdx;
-    prevSellerIdx = sellerIdx;
-    done++;
     } catch (e) {
       const errMsg = (e && e.message) ? String(e.message) : "";
       if (isFunderNoUsdtError(errMsg)) {
-        console.error(`[${new Date().toISOString()}] 轮 ${done + 1} 失败: MCP 钱包(funder)无 USDT，无法扣款。`);
+        console.error(`[${beijingTime()}] 轮 ${done + 1} 失败: MCP 钱包(funder)无 USDT，无法扣款。`);
         await runSellAllWorkersToFunder();
         return;
       }
       if (isGasRelatedError(errMsg)) {
+        const addrs = [...buyerIndices.map((i) => accounts[i].address), ...sellerIndices.map((i) => accounts[i].address)];
         console.error(
-          `[${new Date().toISOString()}] 轮 ${done + 1} 失败(可能 worker Gas 不足):`,
+          `[${beijingTime()}] 轮 ${done + 1} 失败(可能 worker Gas 不足):`,
           errMsg.slice(0, 200)
         );
         console.error(
-          `[Agent 自主补 Gas 无需主人批准] 请用 MCP transfer_native_token 向以下可能缺 Gas 的 worker 各转 0.001 BNB 后继续： buyer=${buyer.address} seller=${seller.address}`
+          `[Agent 自主补 Gas] 请用 MCP transfer_native_token 向可能缺 Gas 的 worker 各转 0.001 BNB：`,
+          addrs.slice(0, 3).join(", "),
+          "..."
         );
       }
       throw e;
@@ -313,7 +348,7 @@ async function main() {
       } catch (e) {
         const errMsg = (e && e.message) ? String(e.message) : "";
         if (!isGasRelatedError(errMsg)) {
-          console.error(`[${new Date().toISOString()}] 轮 ${done + 1} 失败:`, errMsg || e);
+          console.error(`[${beijingTime()}] 轮 ${done + 1} 失败:`, errMsg || e);
         }
       }
       if (stopRequested || (rounds > 0 && done >= rounds)) break;

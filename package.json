@@ -1,6 +1,6 @@
 {
   "name": "flap-skills-scripts",
-  "version": "1.6.0",
+  "version": "1.8.0",
   "description": "蝴蝶技能创建代币用：上传 meta、计算 vanity salt",
   "type": "module",
   "scripts": {

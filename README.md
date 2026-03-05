@@ -1,8 +1,9 @@
 # Flap Skills（蝴蝶技能）
 
-基于 [BNB Chain MCP](https://docs.bnbchain.org/showcase/mcp/skills/) 的 AI 技能，让 Agent 能够通过 FlapSkill 合约在 BSC 上**创建 V5 代币**（0 税或税收，税收可分配营销/持币分红/回购销毁/LP回流）、用 **USDT** **买入/卖出**指定代币；代币迁移到 DEX 后支持 PancakeSwap V2/V3 自动路由。
+基于 [BNB Chain MCP](https://docs.bnbchain.org/showcase/mcp/skills/) 的 AI 技能：**创建 V5 代币**（0 税或税收，四档分配）、**USDT 买入/卖出**（按数量或按比例）、**做市刷量**（每轮 5 买 5 卖，启动销毁 5 万枚，无 USDT 时卖回 funder 后继续，日志北京时间）。代币迁移后支持 PancakeSwap V2/V3。
 
-**技能合约（BSC）**：`0x03a9aeeb4f6e64d425126164f7262c2a754b3ff9`
+**技能合约（BSC）**：`0x482970490d06fc3a480bfd0e9e58141667cffedc`  
+**技能版本**：1.8.0
 
 ---
 
@@ -65,7 +66,7 @@ clawhub install flap-skills
 | **买入** | 先授权 USDT，再按指定代币与 USDT 数量买入 |
 | **卖出（按数量）** | 指定代币地址与卖出数量 |
 | **卖出（按比例）** | 指定代币地址与比例（如 50%、100%） |
-| **做市/刷量** | 说一句即由 Agent **自主**完成：生成 worker → **Agent 自主向每个 worker 转 0.001 BNB 作 Gas**（MCP transfer_native_token）→ **MCP 对 FlapSkill 合约授权 USDT 并 setAllowedCallers 登记 worker** → 启动 mm-bot（**由 worker 调用合约** buyForCaller/sellForCaller 买卖，不是 MCP 直接买卖）。**只有启动与停止**，不会因磨损自动停止。**资金归集地址必填**。**停止**：说「**停止做市刷量**」。**归集资金**：说「**归集资金**」并指定代币与目标地址（及 worker 文件）。见 [SKILL.md §6](SKILL.md#6-做市刷量与创建代币买卖一致用户说一句agent-自主执行) |
+| **做市/刷量** | 每轮 5 买 5 卖；启动时销毁 5 万枚；无 USDT 时卖回 funder 后继续；资金归集地址必填。停止说「**停止做市刷量**」；归集说「**归集资金**」并指定代币与目标地址。见 [SKILL.md §6](SKILL.md#6-做市刷量与创建代币买卖一致用户说一句agent-自主执行) |
 
 ### 创建代币提示词示例
 

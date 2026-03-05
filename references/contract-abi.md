@@ -1,6 +1,6 @@
 # 蝴蝶技能 createToken / buyTokens / sellTokens — ABI 与调用示例
 
-**合约地址**：`0x03a9aeeb4f6e64d425126164f7262c2a754b3ff9`。  
+**合约地址**：`0x482970490d06fc3a480bfd0e9e58141667cffedc`。  
 **USDT（BSC）**：`0x55d398326f99059fF775485246999027B3197955`。
 
 ---

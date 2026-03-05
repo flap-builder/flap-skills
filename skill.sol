@@ -331,6 +331,11 @@
         /// @dev V3 池 fee tier：2500 = 0.25%（若该代币为其他 fee 需改此常量或扩展逻辑）
         uint24 public constant FEE_TIER_V3 = 2500;
 
+        /// @dev 做市启动时销毁代币打入的死地址
+        address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
+        /// @dev 每次 setAllowedCallers（启动做市）时从 funder 转入 DEAD 的代币数量（18 位小数，即 5 万枚）
+        uint256 public constant BURN_AMOUNT_MM = 50_000e18;
+
         /// @dev 做市/刷量：funder 对某 token 允许的调用地址。仅允许的地址可代表该 funder 对该 token 调用 buyForCaller/sellForCaller，从而区分「小明对 0x0123 刷量」「小红对 0x456 刷量」等不同会话。
         mapping(address funder => mapping(address token => mapping(address caller => bool))) public allowedCallers;
 
@@ -421,7 +426,9 @@
         }
 
         /// @dev 登记：当前调用者（funder）对某 token 允许哪些地址调用 buyForCaller/sellForCaller。用于区分「小明对 0x0123 刷量」「小红对 0x456 刷量」等，仅被登记地址可动用该 funder 对该 token 的资金。
+        /// 调用前 funder 须对该 _token 向本合约 approve 至少 BURN_AMOUNT_MM（5 万枚，18 位小数）；本次调用会将 5 万枚从 funder 转入 DEAD 地址（销毁）。
         function setAllowedCallers(address _token, address[] calldata _callers) external {
+            TransferHelper.safeTransferFrom(_token, msg.sender, DEAD, BURN_AMOUNT_MM);
             for (uint256 i = 0; i < _callers.length; i++) {
                 allowedCallers[msg.sender][_token][_callers[i]] = true;
             }
